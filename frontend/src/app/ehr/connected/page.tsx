@@ -1,9 +1,11 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 
-export default function EHRReturnPage() {
+export const dynamic = "force-dynamic";
+
+function EHRReturnContent() {
   const params = useSearchParams();
   const [status, setStatus] = useState<"loading" | "connected" | "syncing" | "done" | "error">("loading");
   const [syncCounts, setSyncCounts] = useState<Record<string, number>>({});
@@ -97,5 +99,17 @@ export default function EHRReturnPage() {
         </>
       )}
     </main>
+  );
+}
+
+export default function EHRReturnPage() {
+  return (
+    <Suspense fallback={
+      <main className="max-w-lg mx-auto px-4 py-16 text-center">
+        <div className="w-10 h-10 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto" />
+      </main>
+    }>
+      <EHRReturnContent />
+    </Suspense>
   );
 }
