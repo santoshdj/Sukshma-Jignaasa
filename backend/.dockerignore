@@ -1,0 +1,41 @@
+# Python runtime artefacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# Secrets — never bake into the image
+.env
+.env.*
+!.env.example
+
+# Dev databases
+dev.db
+*.db
+*.db-shm
+*.db-wal
+
+# Test artefacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Vector store (large, regenerated at runtime)
+data/chroma_db/
+
+# Test / script code not needed in production image
+tests/
+scripts/
+
+# Agent / IDE config
+.agents/
+.claude/
+skills-lock.json
+
+# Railway / deployment config (not needed inside image)
+railway.json
+railway.toml
+Procfile
