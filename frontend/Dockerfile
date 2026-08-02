@@ -14,6 +14,22 @@ COPY . .
 ARG NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa
 ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 
+# Clerk public keys (required at build time for client-side code)
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
+ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+ENV NEXT_PUBLIC_CLERK_SIGN_IN_URL=$NEXT_PUBLIC_CLERK_SIGN_IN_URL
+
+ARG NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+ENV NEXT_PUBLIC_CLERK_SIGN_UP_URL=$NEXT_PUBLIC_CLERK_SIGN_UP_URL
+
+ARG NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/
+ENV NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=$NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL
+
+ARG NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/
+ENV NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=$NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL
+
 # BACKEND_URL is used in next.config.js rewrites (evaluated at build time)
 ARG BACKEND_URL=http://localhost:8000
 ENV BACKEND_URL=$BACKEND_URL
@@ -27,6 +43,10 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+
+# Runtime environment variables (injected by Railway at deploy time):
+# - CLERK_SECRET_KEY (server-side only, never exposed to client)
+# - PORT (Railway-specific, defaults to 3000)
 
 # Copy built output and runtime dependencies
 COPY --from=builder /app/.next ./.next
