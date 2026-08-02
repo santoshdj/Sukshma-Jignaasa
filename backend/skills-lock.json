@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "medblocks": {
+      "source": "medblocks/skills",
+      "sourceType": "github",
+      "skillPath": "skills/medblocks/SKILL.md",
+      "computedHash": "6d14a68c355d2f4eba6a1763c43affd168e2ffcbb8187f730b61f7e7cdb0161d"
+    }
+  }
+}

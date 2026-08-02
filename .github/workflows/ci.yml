@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main, phase-*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run pytest tests/ -v --tb=short
+        env:
+          # No real API key needed — LLM calls are mocked in all tests
+          ANTHROPIC_API_KEY: "test-key-not-used"
+          MEDBLOCKS_API_KEY: "test-key-not-used"
+
+  frontend-typecheck:
+    name: Frontend type-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Type-check
+        run: bun run lint
