@@ -20,7 +20,7 @@ Patient (Browser / PWA)
   FastAPI Backend (Python 3.12)
   - Auth (Medblocks patient sessions)
   - Symptom log CRUD
-  - LangGraph AI orchestration layer
+  - Plain Python AI orchestration layer (session_store + node functions)
   - FHIR resource construction
   - Appointment prep document generation
         │
@@ -61,7 +61,7 @@ Patient (Browser / PWA)
 | Concern | Technology | Rationale |
 |---------|-----------|-----------|
 | Framework | **FastAPI** (Python 3.12) | Async, typed, matches all existing AI service patterns in workspace |
-| AI orchestration | **LangGraph** | Multi-mode state machine (Pattern Narrator / Hypothesis Surfacer / Appointment Prep nodes); human-in-the-loop review gate; matches `healthcare-audit-agent` architecture |
+| AI orchestration | **Plain Python + SQLite session store** | Stateful multi-turn sessions persisted to `ai_sessions` DB table; human-in-the-loop gate is the HTTP response boundary; node functions called directly from routers — no graph framework needed |
 | LLM routing | **LiteLLM** | Provider-agnostic; Anthropic default; swap to OpenAI/Gemini via config |
 | LLM (check-in) | **Claude Haiku** | Fast, cheap, sufficient for conversational extraction of structured fields from free-text |
 | LLM (analysis) | **Claude Sonnet** | Strong medical knowledge, long context (90-day symptom histories), structured JSON output |
@@ -101,12 +101,12 @@ Patient FHIR resources are pseudonymised — the Medblocks `patient_id` UUID is 
 
 ---
 
-## AI Orchestration (LangGraph)
+## AI Orchestration
 
-Three AI modes are implemented as a `StateGraph` with mode-specific nodes. Each mode is independently specced, prompted, and testable.
+Three AI modes are implemented as plain Python node functions called directly by FastAPI routers. State is persisted between HTTP requests using a SQLite-backed `ai_sessions` table via SQLAlchemy.
 
 ```
-CompanionState
+CompanionState (TypedDict, stored as JSON in ai_sessions table)
   ├── patient_id
   ├── mode: "check_in" | "pattern_narration" | "hypothesis" | "appointment_prep"
   ├── symptom_history: list[FHIRObservation]      # loaded from Medblocks
@@ -115,12 +115,16 @@ CompanionState
   ├── human_approved: bool                        # review gate (appointment_prep)
   └── errors: list[str]
 
-Graph:
-  load_context → route_by_mode
-    ├── check_in_node         (Claude Haiku)  → extract structured fields → save to FHIR
-    ├── pattern_narrator_node (Claude Sonnet) → temporal analysis → PatternReport
-    ├── hypothesis_node       (Claude Sonnet) → symptom fingerprint match → HypothesisList
-    └── appointment_prep_node (Claude Sonnet) → structured summary → [INTERRUPT for review] → share
+Orchestration:
+  POST /check-in/start    → check_in_node()   (Claude Haiku)  → save state → respond
+  POST /check-in/message  → check_in_node()   (loop)          → save state → respond
+  POST /check-in/confirm  → FHIR write                        → delete session
+
+  POST /hypothesis/start  → hypothesis_node() (Claude Sonnet) → save state → respond
+  POST /hypothesis/approve → mark approved or re-run node with feedback
+
+Human review gate: each HTTP response IS the interrupt point.
+No graph framework required — session_store.get/save/delete replaces MemorySaver.
 ```
 
 All nodes that produce patient-facing clinical content implement the three safety guardrails:

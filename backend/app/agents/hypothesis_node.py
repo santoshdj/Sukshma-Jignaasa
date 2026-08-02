@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 _MEDBLOCKS_BASE = "https://app.medblocks.com"
 _GUARDRAIL_PATTERNS = [
     re.compile(r"\byou (have|likely have|probably have)\b", re.IGNORECASE),
-    re.compile(r"\bdiagnos(is|e|ed|ing)\b", re.IGNORECASE),
+    re.compile(r"\bdiagnos(is|e|es|ed|ing)\b", re.IGNORECASE),
     re.compile(r"\bthis is consistent with\b", re.IGNORECASE),
     re.compile(r"\bthis (could|may|might) be\b", re.IGNORECASE),
     re.compile(r"\bI (believe|think|suspect)\b", re.IGNORECASE),
@@ -57,46 +57,121 @@ def check_hypothesis_guardrails(text: str) -> list[str]:
 # ── Data assembly helpers ─────────────────────────────────────────────────────
 
 async def _get_patient_observations(patient_id: str) -> list[dict]:
-    """Fetch last 90 days of FHIR Observations from Medblocks (async for use in tests)."""
+    """Fetch last 90 days of FHIR Observations (async wrapper for tests)."""
     return _get_patient_observations_sync(patient_id)
 
 
 def _get_patient_observations_sync(patient_id: str) -> list[dict]:
-    """Fetch last 90 days of FHIR Observations from Medblocks (sync, used by LangGraph node)."""
+    """
+    Fetch last 90 days of FHIR Observations from the Medblocks FHIR server.
+    These are the check-in observations written by fhir_writer.py.
+
+    Medblocks sandbox does not index the 'subject' search parameter, so if a
+    subject-filtered query returns 0 entries we fall back to fetching all
+    observations unfiltered and applying both the subject and date filters
+    client-side.
+    """
     settings = get_settings()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    fhir_base = settings.medblocks_fhir_base_url.rstrip("/")
+    cutoff_str = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=90)
+    target_ref = f"Patient/{patient_id}"
+
     headers = {
-        "Authorization": f"Bearer {settings.medblocks_api_key}",
-        "Accept": "application/json",
+        "Authorization": f"Bearer {settings.medblocks_fhir_bearer_token}",
+        "Accept": "application/fhir+json",
     }
-    observations: list[dict] = []
-    params: dict = {"count": 200, "resource_type": "Observation"}
+
+    def _resources_from_bundle(bundle: dict) -> list[dict]:
+        results: list[dict] = []
+        for entry in bundle.get("entry", []):
+            resource = entry.get("resource") or entry
+            if resource.get("resourceType") == "Observation":
+                results.append(resource)
+        return results
+
+    def _within_cutoff(obs: dict) -> bool:
+        effective = obs.get("effectiveDateTime", "")
+        if not effective:
+            return True  # include if date unknown
+        try:
+            dt = datetime.fromisoformat(effective.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt >= cutoff_dt
+        except (ValueError, TypeError):
+            return True
 
     try:
-        with httpx.Client(timeout=20.0) as client:
+        with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+            # ── Attempt 1: server-side subject + date filter ──────────────────
             resp = client.get(
-                f"{_MEDBLOCKS_BASE}/patients/{patient_id}/records",
+                f"{fhir_base}/Observation",
                 headers=headers,
-                params=params,
+                params={
+                    "subject": target_ref,
+                    "date": f"ge{cutoff_str}",
+                    "_count": "200",
+                },
             )
             resp.raise_for_status()
-            data = resp.json()
-            for item in data.get("data", []):
-                resource = item.get("resource") or item
-                effective = resource.get("effectiveDateTime", "")
-                if effective:
-                    try:
-                        obs_time = datetime.fromisoformat(effective.replace("Z", "+00:00"))
-                        if obs_time >= cutoff:
-                            observations.append(resource)
-                    except ValueError:
-                        observations.append(resource)
-                else:
-                    observations.append(resource)
+            bundle = resp.json()
+            observations = _resources_from_bundle(bundle)
+
+            if observations:
+                logger.info(
+                    "Fetched %d observations for %s via server-side subject filter",
+                    len(observations), patient_id,
+                )
+                return observations
+
+            # ── Attempt 2: server doesn't index subject — fetch all, filter client-side
+            logger.warning(
+                "Subject-filtered search returned 0 for %s — falling back to "
+                "unfiltered fetch with client-side filtering",
+                patient_id,
+            )
+            all_obs: list[dict] = []
+            next_url: str | None = f"{fhir_base}/Observation"
+            next_params: dict | None = {"_count": "50", "date": f"ge{cutoff_str}"}
+            page = 0
+
+            while next_url and page < 20:
+                page += 1
+                fetch_resp = client.get(
+                    next_url,
+                    headers=headers,
+                    params=next_params if page == 1 else None,
+                    timeout=20.0,
+                )
+                fetch_resp.raise_for_status()
+                page_bundle = fetch_resp.json()
+                page_obs = _resources_from_bundle(page_bundle)
+
+                for obs in page_obs:
+                    subject_ref = obs.get("subject", {}).get("reference", "")
+                    if subject_ref == target_ref and _within_cutoff(obs):
+                        all_obs.append(obs)
+
+                links = {
+                    lnk["relation"]: lnk["url"]
+                    for lnk in page_bundle.get("link", [])
+                }
+                next_url = links.get("next")
+                next_params = None  # params are baked into the next URL
+
+                if len(all_obs) >= 200:
+                    break
+
+            logger.info(
+                "Client-side filter: %d observations for %s after %d page(s)",
+                len(all_obs), patient_id, page,
+            )
+            return all_obs
+
     except Exception as exc:
         logger.warning("Could not fetch observations for %s: %s", patient_id, exc)
-
-    return observations
+        return []
 
 
 def _build_symptom_fingerprint(observations: list[dict]) -> dict:

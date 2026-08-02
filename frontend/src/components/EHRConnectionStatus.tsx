@@ -17,6 +17,7 @@ interface Props {
 export function EHRConnectionStatus({ patientId }: Props) {
   const [status, setStatus] = useState<EHRStatus | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/ehr/status?patient_id=${encodeURIComponent(patientId)}`)
@@ -27,17 +28,23 @@ export function EHRConnectionStatus({ patientId }: Props) {
 
   const handleConnect = async () => {
     setConnecting(true);
+    setConnectError(null);
     try {
-      const returnUrl = `${window.location.origin}/ehr/connected`;
+      const returnUrl = `${window.location.origin}/ehr/connected?patient_id=${encodeURIComponent(patientId)}`;
       const res = await fetch("/api/ehr/connect/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ patient_id: patientId, return_url: returnUrl }),
       });
-      if (!res.ok) throw new Error("Failed to start connection");
-      const { auth_url } = await res.json() as { auth_url: string };
-      window.location.href = auth_url;
-    } catch {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(typeof err.detail === "string" ? err.detail : JSON.stringify(err.detail));
+      }
+      const data = await res.json() as { auth_url: string };
+      if (!data.auth_url) throw new Error("No auth_url returned from server");
+      window.location.href = data.auth_url;
+    } catch (err: unknown) {
+      setConnectError(err instanceof Error ? err.message : "Connection failed");
       setConnecting(false);
     }
   };
@@ -48,18 +55,23 @@ export function EHRConnectionStatus({ patientId }: Props) {
 
   if (!status || status.connection_status === "not_connected") {
     return (
-      <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-slate-700">Health records not connected</p>
-          <p className="text-xs text-slate-500">Connecting your EHR improves pattern analysis</p>
+      <div className="space-y-2">
+        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-slate-700">Health records not connected</p>
+            <p className="text-xs text-slate-500">Connecting your EHR improves pattern analysis</p>
+          </div>
+          <button
+            onClick={() => void handleConnect()}
+            disabled={connecting}
+            className="text-sm font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-50 whitespace-nowrap"
+          >
+            {connecting ? "Redirecting…" : "Connect →"}
+          </button>
         </div>
-        <button
-          onClick={() => void handleConnect()}
-          disabled={connecting}
-          className="text-sm font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-50 whitespace-nowrap"
-        >
-          {connecting ? "Redirecting…" : "Connect →"}
-        </button>
+        {connectError && (
+          <p className="text-xs text-red-600 px-1">{connectError}</p>
+        )}
       </div>
     );
   }

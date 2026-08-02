@@ -98,6 +98,27 @@ class ExtractedSymptom(BaseModel):
     duration_minutes: int | None = Field(None, ge=0, description="Duration in minutes; null if not mentioned")
     onset_time: datetime | None = Field(None, description="Symptom onset; defaults to check-in time if null")
 
+    @field_validator("severity", mode="before")
+    @classmethod
+    def coerce_severity(cls, v: object) -> int:
+        """Default to 5 when LLM returns null for severity."""
+        if v is None:
+            return 5
+        return int(v)
+
+    @field_validator("onset_time", mode="before")
+    @classmethod
+    def coerce_onset_time(cls, v: object) -> datetime | None:
+        """Return None for vague strings (e.g. 'evening') the LLM emits instead of ISO datetimes."""
+        if v is None or isinstance(v, datetime):
+            return v
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v)
+            except (ValueError, TypeError):
+                return None
+        return None
+
     # Trigger fields
     probable_trigger: str | None = Field(None, description="Probable trigger in plain text; null if not identified")
     trigger_delay_minutes: int | None = Field(None, ge=0, description="Minutes between trigger and symptom onset")

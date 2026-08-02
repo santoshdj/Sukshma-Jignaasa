@@ -55,6 +55,15 @@ class HypothesisProfile(BaseModel):
     )
     discuss_with_specialist: bool = True
 
+    @field_validator("plain_language_explanation", mode="before")
+    @classmethod
+    def truncate_explanation(cls, v: object) -> str:
+        """Silently truncate LLM output that exceeds the character limit."""
+        s = str(v) if not isinstance(v, str) else v
+        if len(s) > 500:
+            return s[:497] + "..."
+        return s
+
     @model_validator(mode="after")
     def enforce_discuss_with_specialist(self) -> "HypothesisProfile":
         """This field is ALWAYS True. LLM output cannot override it."""
@@ -84,6 +93,15 @@ class HypothesisReport(BaseModel):
         max_length=1000,
         description="≤150 words overall narrative",
     )
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def truncate_summary(cls, v: object) -> str:
+        """Silently truncate LLM output that exceeds the character limit."""
+        s = str(v) if not isinstance(v, str) else v
+        if len(s) > 1000:
+            return s[:997] + "..."
+        return s
     guardrail_disclosure: str = Field(
         default=_GUARDRAIL_DISCLOSURE,
         description="Always appended by backend — never written by LLM",

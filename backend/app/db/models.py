@@ -40,3 +40,19 @@ class EHRRecordRow(Base):
     resource_id: Mapped[str] = mapped_column(String, nullable=False)
     resource_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AISessionRow(Base):
+    """
+    Persists AI session state between HTTP requests.
+    Replaces LangGraph MemorySaver — each row is one active session keyed by UUID.
+    Sessions are deleted on completion (confirm / approve).
+    """
+
+    __tablename__ = "ai_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # session_id UUID
+    session_type: Mapped[str] = mapped_column(String, nullable=False)  # "check_in" | "hypothesis"
+    state_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

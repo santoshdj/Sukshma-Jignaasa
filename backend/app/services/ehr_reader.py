@@ -42,17 +42,37 @@ async def start_patient_session(patient_id: str, return_url: str) -> str:
     Start a Medblocks patient session.
     Returns the auth_url to redirect the patient to.
     """
+    settings = get_settings()
+    key = settings.medblocks_api_key
+    key_preview = f"{key[:8]}…{key[-4:]}" if len(key) > 12 else ("<empty>" if not key else "<short>")
+    # TODO: REMOVE BEFORE COMMIT — full key logged for local debugging only
+    logger.warning("DEBUG api_key_full=%s", key)
+    logger.info(
+        "start_patient_session: patient_id=%s return_url=%s api_key=%s",
+        patient_id, return_url, key_preview,
+    )
+
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
             f"{_BASE_URL}/patient-sessions",
             headers=_headers(),
             json={"patient_id": patient_id, "return_url": return_url},
         )
+        logger.info(
+            "start_patient_session: response status=%s url=%s",
+            resp.status_code, resp.url,
+        )
+        if resp.status_code >= 400:
+            logger.error(
+                "start_patient_session: error body=%s",
+                resp.text[:500],
+            )
         resp.raise_for_status()
         data = resp.json()
         auth_url: str = data.get("url") or data.get("auth_url") or data.get("authorization_url", "")
         if not auth_url:
             raise ValueError(f"Medblocks did not return an auth_url: {data}")
+        logger.info("start_patient_session: auth_url obtained successfully")
         return auth_url
 
 

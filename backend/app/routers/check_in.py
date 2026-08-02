@@ -4,18 +4,21 @@ Check-In Router — /check-in
 Three endpoints drive the full daily check-in session flow:
 
   1. POST /check-in/start
-       Initialise state, run ai_turn (opening message), pause at human_turn.
+       Initialise state, run check_in_node (opening message), save to session store.
        Returns: session_id + AI opening message.
 
   2. POST /check-in/message
-       Inject patient message, resume graph, run ai_turn.
+       Append patient message to state, run check_in_node, save updated state.
        Returns: AI message + status.
        When status="awaiting_confirmation": also returns confirmation_summary.
 
   3. POST /check-in/confirm
        Patient confirms or requests edit.
-       On "confirm": resume graph → END → FHIR write → return observation IDs.
-       On "edit": resume graph → loops back to ai_turn with edit context.
+       On "confirm": FHIR write → delete session → return observation IDs.
+       On "edit":    append edit note → re-run check_in_node → save → return AI response.
+
+State persistence is handled by session_store (SQLite-backed).
+The "human-in-the-loop interrupt" is the HTTP response boundary — no graph framework needed.
 """
 
 from __future__ import annotations
@@ -26,8 +29,10 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from app.agents.check_in_graph import check_in_graph
+from app.agents import session_store
+from app.agents.check_in_node import check_in_node
 from app.models.check_in import (
+    CheckInExtraction,
     CheckInState,
     ConfirmCheckInRequest,
     ConfirmCheckInResponse,
@@ -38,23 +43,21 @@ from app.models.check_in import (
     CheckInMessageResponse,
 )
 from app.services.fhir_writer import extraction_to_observations, write_check_in
-from app.models.check_in import CheckInExtraction
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/check-in", tags=["Check-In"])
 
+_SESSION_TYPE = "check_in"
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _config(session_id: str) -> dict:
-    return {"configurable": {"thread_id": session_id}}
-
-
-def _get_state(session_id: str) -> dict:
-    snapshot = check_in_graph.get_state(_config(session_id))
-    if not snapshot or not snapshot.values:
+def _require_session(session_id: str) -> dict:
+    """Return stored state or raise 404."""
+    state = session_store.get(session_id)
+    if state is None:
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found.")
-    return snapshot.values
+    return state
 
 
 def _last_ai_message(state: dict) -> str:
@@ -109,22 +112,15 @@ def _build_confirmation_summary(state: dict) -> ConfirmationSummary:
     )
 
 
-def _run_graph_until_interrupt(config: dict, input_: dict | None) -> None:
-    """Stream the graph until it hits an interrupt or END. Consumes all events."""
-    for _ in check_in_graph.stream(input_, config):
-        pass
-
-
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/start", response_model=StartCheckInResponse, status_code=200)
 def start_check_in(body: StartCheckInRequest) -> StartCheckInResponse:
     """
     Start a new check-in session.
-    Runs the AI opening turn and pauses at human_turn waiting for the patient.
+    Runs the AI opening turn (hardcoded greeting — no LLM call) and saves state.
     """
     session_id = str(uuid.uuid4())
-    config = _config(session_id)
 
     initial_state: CheckInState = {
         "session_id": session_id,
@@ -142,17 +138,17 @@ def start_check_in(body: StartCheckInRequest) -> StartCheckInResponse:
     }
 
     try:
-        _run_graph_until_interrupt(config, initial_state)
+        updates = check_in_node(initial_state)
     except Exception as exc:
-        logger.error("start_check_in graph error for session %s: %s", session_id, exc)
+        logger.error("start_check_in node error for session %s: %s", session_id, exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    state = _get_state(session_id)
-    ai_message = _last_ai_message(state)
+    state = {**initial_state, **updates}
+    session_store.save(session_id, _SESSION_TYPE, state)
 
     return StartCheckInResponse(
         session_id=session_id,
-        ai_message=ai_message,
+        ai_message=_last_ai_message(state),
         status=state.get("status", "in_progress"),
     )
 
@@ -164,8 +160,7 @@ def send_message(body: CheckInMessageRequest) -> CheckInMessageResponse:
     When the AI has enough information, returns status='awaiting_confirmation'
     plus a structured confirmation_summary.
     """
-    config = _config(body.session_id)
-    state = _get_state(body.session_id)
+    state = _require_session(body.session_id)
 
     current_status = state.get("status", "in_progress")
     if current_status in ("awaiting_confirmation", "saved", "filed"):
@@ -174,27 +169,26 @@ def send_message(body: CheckInMessageRequest) -> CheckInMessageResponse:
             detail=f"Session is in '{current_status}' state — use POST /check-in/confirm.",
         )
 
-    # Inject patient message into state
-    history = list(state.get("conversation_history", []))
-    history.append({"role": "user", "content": body.patient_message})
-    check_in_graph.update_state(config, {"conversation_history": history})
+    state["conversation_history"] = list(state.get("conversation_history", [])) + [
+        {"role": "user", "content": body.patient_message}
+    ]
 
     try:
-        _run_graph_until_interrupt(config, None)
+        updates = check_in_node(state)
     except Exception as exc:
-        logger.error("send_message graph error for session %s: %s", body.session_id, exc)
+        logger.error("send_message node error for session %s: %s", body.session_id, exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    updated_state = _get_state(body.session_id)
-    ai_message = _last_ai_message(updated_state)
-    new_status = updated_state.get("status", "in_progress")
+    state = {**state, **updates}
+    session_store.save(body.session_id, _SESSION_TYPE, state)
 
+    new_status = state.get("status", "in_progress")
     confirmation_summary = None
     if new_status == "awaiting_confirmation":
-        confirmation_summary = _build_confirmation_summary(updated_state)
+        confirmation_summary = _build_confirmation_summary(state)
 
     return CheckInMessageResponse(
-        ai_message=ai_message,
+        ai_message=_last_ai_message(state),
         status=new_status,
         confirmation_summary=confirmation_summary,
     )
@@ -204,11 +198,10 @@ def send_message(body: CheckInMessageRequest) -> CheckInMessageResponse:
 async def confirm_check_in(body: ConfirmCheckInRequest) -> ConfirmCheckInResponse:
     """
     Patient reviews the confirmation summary and either:
-      - Confirms ("confirm"): FHIR observations are written, session is complete.
+      - Confirms ("confirm"): FHIR observations are written, session is deleted.
       - Requests edit ("edit"): AI re-opens for correction.
     """
-    config = _config(body.session_id)
-    state = _get_state(body.session_id)
+    state = _require_session(body.session_id)
 
     if state.get("status") != "awaiting_confirmation":
         raise HTTPException(
@@ -220,58 +213,44 @@ async def confirm_check_in(body: ConfirmCheckInRequest) -> ConfirmCheckInRespons
         if not (body.edit_notes or "").strip():
             raise HTTPException(status_code=400, detail="edit_notes required when decision='edit'.")
 
-        # Inject edit request back into conversation as a user message
-        history = list(state.get("conversation_history", []))
-        history.append({
-            "role": "user",
-            "content": f"Please update: {body.edit_notes}",
-        })
-        check_in_graph.update_state(config, {
-            "conversation_history": history,
-            "human_confirmed": False,
-            "status": "in_progress",
-        })
-        _run_graph_until_interrupt(config, None)
+        state["conversation_history"] = list(state.get("conversation_history", [])) + [
+            {"role": "user", "content": f"Please update: {body.edit_notes}"}
+        ]
+        state["human_confirmed"] = False
+        state["status"] = "in_progress"
 
-        updated_state = _get_state(body.session_id)
-        ai_message = _last_ai_message(updated_state)
+        try:
+            updates = check_in_node(state)
+        except Exception as exc:
+            logger.error("confirm edit node error for session %s: %s", body.session_id, exc)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        state = {**state, **updates}
+        session_store.save(body.session_id, _SESSION_TYPE, state)
+
         return ConfirmCheckInResponse(
-            status=updated_state.get("status", "in_progress"),
+            status=state.get("status", "in_progress"),
             fhir_observation_ids=[],
         )
 
     # decision == "confirm"
-    check_in_graph.update_state(config, {
-        "human_confirmed": True,
-        "status": "filed",
-    })
-
-    try:
-        _run_graph_until_interrupt(config, None)
-    except Exception as exc:
-        logger.error("confirm graph error for session %s: %s", body.session_id, exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    final_state = _get_state(body.session_id)
-    extraction_dict = final_state.get("current_extraction") or {}
-
-    # Write to FHIR
+    extraction_dict = state.get("current_extraction") or {}
     fhir_ids: list[str] = []
+
     try:
         extraction = CheckInExtraction(**extraction_dict) if extraction_dict else None
         if extraction:
             observations = extraction_to_observations(
                 extraction,
-                patient_id=final_state["patient_id"],
+                patient_id=state["patient_id"],
                 check_in_time=datetime.now(timezone.utc),
             )
-            fhir_ids = await write_check_in(observations, final_state["patient_id"])
+            fhir_ids = await write_check_in(observations, state["patient_id"])
     except Exception as exc:
         logger.error("FHIR write failed for session %s: %s", body.session_id, exc)
         # Don't raise — return partial success with empty fhir_ids
 
-    # Store IDs back in state
-    check_in_graph.update_state(config, {"fhir_observation_ids": fhir_ids})
+    session_store.delete(body.session_id)
 
     return ConfirmCheckInResponse(
         status="saved",

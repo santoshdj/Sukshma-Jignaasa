@@ -238,32 +238,129 @@ async def write_check_in(
     base_url = getattr(settings, "medblocks_fhir_base_url", None) or "https://fhir.medblocks.com/fhir/R4"
     endpoint = f"{base_url.rstrip('/')}/Observation"
 
+    fhir_token = access_token or settings.medblocks_fhir_bearer_token
     headers: dict[str, str] = {"Content-Type": "application/fhir+json", "Accept": "application/fhir+json"}
-    if access_token:
-        headers["Authorization"] = f"Bearer {access_token}"
+    if fhir_token:
+        headers["Authorization"] = f"Bearer {fhir_token}"
+
+    # TODO: REMOVE BEFORE COMMIT — debug logging for FHIR write diagnostics
+    import json as _json
+    import time as _time
+
+    token_preview = f"{fhir_token[:8]}\u2026{fhir_token[-4:]}" if fhir_token and len(fhir_token) > 12 else (repr(fhir_token))
+    logger.warning(
+        "DEBUG write_check_in: endpoint=%s observations=%d token=%s auth_header=%s",
+        endpoint,
+        len(observations),
+        token_preview,
+        "Bearer ***" if fhir_token else "NONE — unauthenticated",
+    )
 
     resource_ids: list[str] = []
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for obs in observations:
+        for idx, obs in enumerate(observations):
+            obs_summary = {
+                "resourceType": obs.get("resourceType"),
+                "subject": obs.get("subject"),
+                "code_text": obs.get("code", {}).get("text"),
+                "component_count": len(obs.get("component", [])),
+                "effectiveDateTime": obs.get("effectiveDateTime"),
+            }
+            logger.warning(
+                "DEBUG FHIR obs[%d/%d] summary: %s",
+                idx + 1,
+                len(observations),
+                obs_summary,
+            )
+            logger.debug("DEBUG FHIR obs[%d] full payload: %s", idx + 1, _json.dumps(obs))
+
+            t0 = _time.monotonic()
             try:
                 response = await client.post(endpoint, json=obs, headers=headers)
+                elapsed_ms = int((_time.monotonic() - t0) * 1000)
+                logger.warning(
+                    "DEBUG FHIR obs[%d] response: status=%s elapsed_ms=%d headers=%s",
+                    idx + 1,
+                    response.status_code,
+                    elapsed_ms,
+                    dict(response.headers),
+                )
                 response.raise_for_status()
-                created = response.json()
-                resource_id = created.get("id", "")
+
+                # FHIR servers put the new resource ID in the Location header:
+                # Location: <base>/Observation/<id>/_history/1
+                # The response body may be empty (without Prefer: return=representation).
+                resource_id = ""
+
+                location = response.headers.get("Location") or response.headers.get("location", "")
+                if location:
+                    # Extract the ID segment: .../Observation/<id>/_history/...
+                    parts = [p for p in location.rstrip("/").split("/") if p]
+                    try:
+                        history_idx = parts.index("_history")
+                        resource_id = parts[history_idx - 1]
+                    except (ValueError, IndexError):
+                        resource_id = parts[-1] if parts else ""
+                    logger.warning(
+                        "DEBUG FHIR obs[%d] Location header=%s → id=%s",
+                        idx + 1, location, resource_id,
+                    )
+
+                # Fall back to response body if Location yielded nothing
+                if not resource_id:
+                    raw_body = response.text
+                    logger.warning(
+                        "DEBUG FHIR obs[%d] no Location id — raw body (%d chars): %s",
+                        idx + 1, len(raw_body), raw_body[:500],
+                    )
+                    try:
+                        created = response.json()
+                        resource_id = created.get("id", "")
+                    except Exception:
+                        pass
+
                 if resource_id:
                     resource_ids.append(resource_id)
-                    logger.info("FHIR Observation written: %s for patient %s", resource_id, patient_id)
+                    logger.warning("FHIR Observation written: %s for patient %s", resource_id, patient_id)
                 else:
-                    logger.warning("FHIR write succeeded but no ID returned for patient %s", patient_id)
+                    logger.warning(
+                        "FHIR write succeeded (status=%s) but no ID found in Location header "
+                        "or response body for patient %s",
+                        response.status_code,
+                        patient_id,
+                    )
             except httpx.HTTPStatusError as exc:
                 logger.error(
-                    "FHIR write HTTP error %s for patient %s: %s",
+                    "FHIR write HTTP error %s for patient %s — url=%s body=%s",
                     exc.response.status_code,
                     patient_id,
-                    exc.response.text[:200],
+                    exc.response.url,
+                    exc.response.text[:500],
+                )
+            except httpx.TimeoutException as exc:
+                logger.error(
+                    "FHIR write timed out after 15s for patient %s (obs %d/%d): %s",
+                    patient_id,
+                    idx + 1,
+                    len(observations),
+                    exc,
+                )
+            except httpx.ConnectError as exc:
+                logger.error(
+                    "FHIR write connection error for patient %s — endpoint=%s: %s",
+                    patient_id,
+                    endpoint,
+                    exc,
                 )
             except Exception as exc:
-                logger.error("FHIR write failed for patient %s: %s", patient_id, exc)
+                logger.error(
+                    "FHIR write unexpected error for patient %s (obs %d/%d): %s: %s",
+                    patient_id,
+                    idx + 1,
+                    len(observations),
+                    type(exc).__name__,
+                    exc,
+                )
 
     return resource_ids

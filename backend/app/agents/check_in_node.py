@@ -149,7 +149,13 @@ Set "is_complete": true when you have enough information and are ready to show t
 
 # ── Stripping helpers ─────────────────────────────────────────────────────────
 
-def _strip_fences(raw: str) -> str:
+def _strip_fences(raw: str | list) -> str:
+    # Claude occasionally returns content as a list of blocks — flatten to text.
+    if isinstance(raw, list):
+        raw = " ".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in raw
+        )
     raw = raw.strip()
     if raw.startswith("```"):
         parts = raw.split("```")
@@ -238,19 +244,39 @@ def check_in_node(state: CheckInState) -> dict:
             from langchain_core.messages import AIMessage
             lc_messages.append(AIMessage(content=content))
 
-    # ── Call LLM ───────────────────────────────────────────────────────────────
-    try:
-        response = llm.invoke(lc_messages)
-        raw = _strip_fences(response.content)
-        parsed = json.loads(raw)
-    except Exception as exc:
-        logger.error("check_in_node LLM call failed: %s", exc)
+    # ── Call LLM (with one retry on empty / unparseable response) ─────────────
+    parsed: dict | None = None
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = llm.invoke(lc_messages)
+            raw = _strip_fences(response.content)
+            if not raw:
+                logger.warning(
+                    "check_in_node attempt %d: empty content after stripping — "
+                    "raw repr: %r  additional_kwargs: %r  metadata: %s",
+                    attempt + 1,
+                    response.content,
+                    getattr(response, "additional_kwargs", {}),
+                    getattr(response, "response_metadata", {}),
+                )
+                raise ValueError("LLM returned empty response")
+            parsed = json.loads(raw)
+            break  # success
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0:
+                logger.warning("check_in_node attempt 1 failed (%s), retrying…", exc)
+            else:
+                logger.error("check_in_node LLM call failed after retry: %s", exc)
+
+    if parsed is None:
         fallback_msg = "I'm having a moment — can you say that again?"
         new_history = list(history) + [{"role": "assistant", "content": fallback_msg}]
         return {
             "conversation_history": new_history,
             "turn_count": turn_count + 1,
-            "errors": state.get("errors", []) + [f"LLM error turn {turn_count}: {exc}"],
+            "errors": state.get("errors", []) + [f"LLM error turn {turn_count}: {last_exc}"],
             "status": "in_progress",
         }
 

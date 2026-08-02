@@ -14,12 +14,15 @@ def get_check_in_llm() -> BaseChatModel:
         return ChatOpenAI(
             model=settings.check_in_model or "gpt-4o-mini",
             api_key=settings.openai_api_key or None,
+            max_tokens=2048,
         )
 
     from langchain_anthropic import ChatAnthropic
     return ChatAnthropic(
         model=settings.check_in_model or "claude-haiku-4-5",
         api_key=settings.anthropic_api_key or None,
+        max_tokens=2048,
+        thinking={"type": "disabled"},
     )
 
 

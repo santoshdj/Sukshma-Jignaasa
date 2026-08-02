@@ -73,7 +73,13 @@ class TestHypothesisHappyPath:
     def test_start_returns_awaiting_review(self):
         resp = self._run_to_awaiting_review()
         assert resp.status_code == 200
-        assert resp.json()["status"] == "awaiting_review"
+        body = resp.json()
+        assert body["session_id"]
+        # /start responds immediately with "running"; background task completes
+        # synchronously inside TestClient, so status endpoint shows final state.
+        session_id = body["session_id"]
+        status_resp = client.get(f"/hypothesis/{session_id}/status")
+        assert status_resp.json()["status"] == "awaiting_review"
 
     def test_report_not_accessible_before_approval(self):
         resp = self._run_to_awaiting_review()
