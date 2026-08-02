@@ -1,11 +1,11 @@
 # ── Stage 1: build ─────────────────────────────────────────────────────────────
-FROM oven/bun:1-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 # Install dependencies (cached layer)
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+COPY package.json package-lock.json ./
+RUN npm ci
 
 # Copy source and build
 COPY . .
@@ -18,7 +18,7 @@ ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 ARG BACKEND_URL=http://localhost:8000
 ENV BACKEND_URL=$BACKEND_URL
 
-RUN bun run build
+RUN npm run build
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────────
 # Use Node for next start (next's production server is Node-based)
