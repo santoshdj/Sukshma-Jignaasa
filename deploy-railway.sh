@@ -68,6 +68,43 @@ check_prerequisites() {
 
 check_prerequisites
 
+# ── link to / create Railway project ─────────────────────────────────────────
+link_or_create_project() {
+  echo "⟳  Linking to Railway project …"
+
+  # Already linked — nothing to do
+  if railway status &>/dev/null 2>&1; then
+    local info
+    info=$(railway status 2>/dev/null | grep -iE 'Project|Environment' || echo "  (project info unavailable)")
+    echo "  ✔  Already linked."
+    echo "$info"
+    echo ""
+    return 0
+  fi
+
+  echo "  → No project linked. Launching interactive project selector …"
+  echo "      Tip: select '$PROJECT_NAME' from the list, or choose \"Create new project\"."
+  echo ""
+
+  # railway link opens an interactive TUI — user picks or creates a project
+  if ! railway link; then
+    echo "❌  railway link exited without selecting a project."
+    echo "    Run \"railway link\" manually, then re-run this script."
+    exit 1
+  fi
+
+  # Confirm the link succeeded
+  if ! railway status &>/dev/null 2>&1; then
+    echo "❌  Still not linked after railway link. Run it manually and re-run this script."
+    exit 1
+  fi
+
+  echo "  ✔  Project linked successfully."
+  echo ""
+}
+
+link_or_create_project
+
 # ── helper: Railway GraphQL call ───────────────────────────────────────────────
 railway_gql() {
   local query="$1"
@@ -112,13 +149,9 @@ if [[ ! -f backend/.env ]]; then
 fi
 source backend/.env
 
-echo "⟳  Phase 1 — creating project and services …"
+echo "⟳  Phase 1 — configuring services …"
 
-# 1. Create project
-railway project create --name "$PROJECT_NAME" 2>/dev/null || true
-railway project use "$PROJECT_NAME" 2>/dev/null || true
-
-# 2. Create backend service
+# 1. Create backend service
 echo "  → Creating backend service …"
 railway service create backend --source github --repo "$GITHUB_REPO" \
   --branch phase-2-intelligence-layer 2>/dev/null || true

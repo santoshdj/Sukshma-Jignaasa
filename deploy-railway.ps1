@@ -73,6 +73,40 @@ function Test-Prerequisites {
 
 Test-Prerequisites
 
+# ── link to / create Railway project ─────────────────────────────────────────
+function Connect-RailwayProject {
+  Write-Host "⟳  Linking to Railway project …" -ForegroundColor Cyan
+
+  # Already linked — nothing to do
+  $status = railway status 2>&1
+  if ($LASTEXITCODE -eq 0 -and $status -notmatch 'not linked') {
+    Write-Host "  ✔  Already linked." -ForegroundColor Green
+    $status | Select-String -Pattern 'Project|Environment' | ForEach-Object { Write-Host "  $_" }
+    Write-Host ""
+    return
+  }
+
+  Write-Host "  → No project linked. Launching interactive project selector …" -ForegroundColor Yellow
+  Write-Host "      Tip: select '$PROJECT_NAME' from the list, or choose 'Create new project'."
+  Write-Host ""
+
+  # railway link opens an interactive TUI — user picks or creates a project
+  railway link
+  if ($LASTEXITCODE -ne 0) {
+    throw "railway link exited without selecting a project. Run 'railway link' manually then re-run this script."
+  }
+
+  # Confirm the link succeeded
+  $status = railway status 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "Still not linked after railway link. Run it manually and re-run this script."
+  }
+
+  Write-Host "  ✔  Project linked successfully.`n" -ForegroundColor Green
+}
+
+Connect-RailwayProject
+
 # ── helper: load .env file into hashtable ──────────────────────────────────────
 function Read-EnvFile($Path) {
   $vars = @{}
@@ -111,13 +145,9 @@ if (-not (Test-Path "backend\.env")) {
 
 $env_vars = Read-EnvFile "backend\.env"
 
-Write-Host "⟳  Phase 1 — creating project and services …" -ForegroundColor Cyan
+Write-Host "⟳  Phase 1 — configuring services …" -ForegroundColor Cyan
 
-# 1. Create / select project
-railway project create --name $PROJECT_NAME 2>$null; $true
-railway project use $PROJECT_NAME 2>$null; $true
-
-# 2. Backend service
+# 1. Backend service
 Write-Host "  → Creating backend service …"
 railway service create backend --source github --repo $GITHUB_REPO --branch $BRANCH 2>$null; $true
 
