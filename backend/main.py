@@ -16,6 +16,7 @@ from app.routers.check_in import router as check_in_router
 from app.routers.clinical_report import router as clinical_report_router
 from app.routers.ehr import router as ehr_router
 from app.routers.hypothesis import router as hypothesis_router
+from app.routers.users import router as users_router
 from app.utils.config import get_settings
 
 _REQUIRED_SETTINGS = {
@@ -70,6 +71,7 @@ app.include_router(check_in_router)
 app.include_router(clinical_report_router)
 app.include_router(ehr_router)
 app.include_router(hypothesis_router)
+app.include_router(users_router)
 
 
 @app.get("/health", tags=["Health"])
