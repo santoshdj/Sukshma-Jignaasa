@@ -1,0 +1,20 @@
+# Dependencies (installed fresh in builder stage)
+node_modules/
+
+# Next.js build output (produced inside builder stage)
+.next/
+
+# Secrets
+.env
+.env.local
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+
+# Railway / deployment config (not needed inside image)
+railway.json
+railway.toml
+Procfile
