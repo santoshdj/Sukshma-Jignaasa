@@ -150,9 +150,22 @@ source backend/.env
 
 echo "⟳  Phase 1 — configuring services …"
 
-# 1. Create backend service (CLI v5: no --source/--repo/--branch flags — connect GitHub in the dashboard)
+# 1. Create backend service
+# Note: connect GitHub repo in the dashboard after creation
 echo "  → Creating backend service …"
-railway service create backend 2>/dev/null || true
+railway service create backend \
+  || echo "  ⚠  'railway service create backend' exited non-zero — service may already exist."
+
+# 2. Create frontend service
+echo "  → Creating frontend service …"
+railway service create frontend \
+  || echo "  ⚠  'railway service create frontend' exited non-zero — service may already exist."
+
+# Show what Railway now sees for this project so we can verify both services exist
+echo ""
+echo "  → Services visible in this project:"
+railway service list 2>/dev/null || railway status 2>/dev/null || echo "    (could not list services — check dashboard)"
+echo ""
 
 # Set backend env vars
 echo "  → Setting backend environment variables …"
@@ -160,21 +173,17 @@ railway variables set --service backend \
   "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
   "MEDBLOCKS_API_KEY=${MEDBLOCKS_API_KEY:-}" \
   "MEDBLOCKS_FHIR_BASE_URL=${MEDBLOCKS_FHIR_BASE_URL:-}" \
-  "MEDBLOCKS_FHIR_BEARER_TOKEN=${MEDBLOCKS_FHIR_BEARER_TOKEN:-}" || true
-
-echo "  ✔  Backend service configured."
-
-# 2. Create frontend service
-echo "  → Creating frontend service …"
-railway service create frontend 2>/dev/null || true
+  "MEDBLOCKS_FHIR_BEARER_TOKEN=${MEDBLOCKS_FHIR_BEARER_TOKEN:-}" \
+  2>&1 || echo "  ⚠  Could not set backend vars — set them manually in the Railway dashboard."
+echo "  ✔  Backend vars applied."
 
 # Set frontend env vars
 echo "  → Setting frontend environment variables …"
 railway variables set --service frontend \
   "NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa" \
-  "BACKEND_URL=http://localhost:8000" || true
-
-echo "  ✔  Frontend service configured."
+  "BACKEND_URL=http://localhost:8000" \
+  2>&1 || echo "  ⚠  Could not set frontend vars — set them manually in the Railway dashboard."
+echo "  ✔  Frontend vars applied."
 
 echo ""
 echo "✅  Phase 1 complete."

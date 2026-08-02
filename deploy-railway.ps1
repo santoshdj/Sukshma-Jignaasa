@@ -149,36 +149,52 @@ $env_vars = Read-EnvFile "backend\.env"
 
 Write-Host "⟳  Phase 1 — configuring services …" -ForegroundColor Cyan
 
-# 1. Backend service
+# 1. Create backend service
+# Note: connect GitHub repo in the dashboard after creation
 Write-Host "  → Creating backend service …"
-# CLI v5: no --source/--repo/--branch flags — connect GitHub repo in the Railway dashboard
-$null = railway service create backend 2>&1
-Write-Host "  → Setting backend environment variables …"
-try {
-  railway variables set --service backend `
-    "ANTHROPIC_API_KEY=$($env_vars['ANTHROPIC_API_KEY'])" `
-    "MEDBLOCKS_API_KEY=$($env_vars['MEDBLOCKS_API_KEY'])" `
-    "MEDBLOCKS_FHIR_BASE_URL=$($env_vars['MEDBLOCKS_FHIR_BASE_URL'])" `
-    "MEDBLOCKS_FHIR_BEARER_TOKEN=$($env_vars['MEDBLOCKS_FHIR_BEARER_TOKEN'])"
-} catch {
-  Write-Host "  ⚠  Could not set backend vars via CLI — set them in the Railway dashboard." -ForegroundColor Yellow
+railway service create backend
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "  ⚠  'railway service create backend' exited non-zero — service may already exist." -ForegroundColor Yellow
 }
 
-Write-Host "  ✔  Backend service configured." -ForegroundColor Green
-
-# 2. Frontend service
+# 2. Create frontend service
 Write-Host "  → Creating frontend service …"
-$null = railway service create frontend 2>&1
-Write-Host "  → Setting frontend environment variables …"
-try {
-  railway variables set --service frontend `
-    "NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa" `
-    "BACKEND_URL=http://localhost:8000"
-} catch {
-  Write-Host "  ⚠  Could not set frontend vars via CLI — set them in the Railway dashboard." -ForegroundColor Yellow
+railway service create frontend
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "  ⚠  'railway service create frontend' exited non-zero — service may already exist." -ForegroundColor Yellow
 }
 
-Write-Host "  ✔  Frontend service configured." -ForegroundColor Green
+# Show what Railway now sees so we can verify both services exist
+Write-Host ""
+Write-Host "  → Services visible in this project:" -ForegroundColor Cyan
+$svcList = railway service list 2>&1
+if ($LASTEXITCODE -ne 0) { $svcList = railway status 2>&1 }
+Write-Host $svcList
+Write-Host ""
+
+# Set backend env vars
+Write-Host "  → Setting backend environment variables …"
+railway variables set --service backend `
+  "ANTHROPIC_API_KEY=$($env_vars['ANTHROPIC_API_KEY'])" `
+  "MEDBLOCKS_API_KEY=$($env_vars['MEDBLOCKS_API_KEY'])" `
+  "MEDBLOCKS_FHIR_BASE_URL=$($env_vars['MEDBLOCKS_FHIR_BASE_URL'])" `
+  "MEDBLOCKS_FHIR_BEARER_TOKEN=$($env_vars['MEDBLOCKS_FHIR_BEARER_TOKEN'])"
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "  ⚠  Could not set backend vars — set them manually in the Railway dashboard." -ForegroundColor Yellow
+} else {
+  Write-Host "  ✔  Backend vars applied." -ForegroundColor Green
+}
+
+# Set frontend env vars
+Write-Host "  → Setting frontend environment variables …"
+railway variables set --service frontend `
+  "NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa" `
+  "BACKEND_URL=http://localhost:8000"
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "  ⚠  Could not set frontend vars — set them manually in the Railway dashboard." -ForegroundColor Yellow
+} else {
+  Write-Host "  ✔  Frontend vars applied." -ForegroundColor Green
+}
 
 Write-Host ""
 Write-Host "✅  Phase 1 complete." -ForegroundColor Green
