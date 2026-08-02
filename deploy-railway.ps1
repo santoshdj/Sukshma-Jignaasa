@@ -24,6 +24,55 @@ $GITHUB_REPO  = "santoshdj/Sukshma-Jignaasa"
 $PROJECT_NAME = "sukshma-jignaasa"
 $BRANCH       = "phase-2-intelligence-layer"
 
+# ── prerequisites ─────────────────────────────────────────────────────────────
+function Test-Prerequisites {
+  Write-Host "⟳  Checking prerequisites …" -ForegroundColor Cyan
+
+  # git must be present
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "git not found. Install from https://git-scm.com/downloads and re-run."
+  }
+  Write-Host "  ✔  git: $(git --version)"
+
+  # railway CLI — auto-install if missing
+  if (-not (Get-Command railway -ErrorAction SilentlyContinue)) {
+    Write-Host "  → railway CLI not found — installing …" -ForegroundColor Yellow
+
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+      npm install -g @railway/cli
+    } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+      winget install Railway.RailwayCLI --silent
+    } else {
+      throw "Cannot auto-install railway CLI: npm and winget not found.`nInstall Node.js from https://nodejs.org then run: npm install -g @railway/cli"
+    }
+
+    # Refresh PATH so the new binary is found in this session
+    $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' +
+                [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+
+    if (-not (Get-Command railway -ErrorAction SilentlyContinue)) {
+      throw "railway CLI installed but not found in PATH. Open a new terminal and re-run."
+    }
+    Write-Host "  ✔  railway CLI installed." -ForegroundColor Green
+  } else {
+    $ver = railway --version 2>$null
+    Write-Host "  ✔  railway CLI: $ver"
+  }
+
+  # Verify Railway login
+  $whoami = railway whoami 2>&1
+  if ($LASTEXITCODE -ne 0 -or $whoami -match 'not logged') {
+    Write-Host "  → Not logged in to Railway — launching browser login …" -ForegroundColor Yellow
+    railway login
+    $whoami = railway whoami 2>&1
+  }
+  Write-Host "  ✔  Logged in as: $whoami"
+
+  Write-Host "✔  All prerequisites satisfied.`n" -ForegroundColor Green
+}
+
+Test-Prerequisites
+
 # ── helper: load .env file into hashtable ──────────────────────────────────────
 function Read-EnvFile($Path) {
   $vars = @{}

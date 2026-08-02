@@ -20,6 +20,54 @@ GITHUB_REPO="santoshdj/Sukshma-Jignaasa"
 PROJECT_NAME="sukshma-jignaasa"
 RAILWAY_API="https://backboard.railway.app/graphql/v2"
 
+# ── prerequisites ─────────────────────────────────────────────────────────────
+check_prerequisites() {
+  echo "⟳  Checking prerequisites …"
+
+  # Tools that must exist and cannot be auto-installed
+  local missing=()
+  for tool in git curl python3; do
+    if ! command -v "$tool" &>/dev/null; then
+      missing+=("$tool")
+    fi
+  done
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "❌  Missing required tools: ${missing[*]}"
+    echo "    Install them with your system package manager and re-run."
+    exit 1
+  fi
+
+  # railway CLI — auto-install if missing
+  if ! command -v railway &>/dev/null; then
+    echo "  → railway CLI not found — installing …"
+    if command -v npm &>/dev/null; then
+      npm install -g @railway/cli
+    elif command -v brew &>/dev/null; then
+      brew install railway
+    else
+      echo "❌  Cannot auto-install railway CLI: npm and brew not found."
+      echo "    Install Node.js (https://nodejs.org) then run: npm install -g @railway/cli"
+      exit 1
+    fi
+    echo "  ✔  railway CLI installed."
+  else
+    echo "  ✔  railway CLI: $(railway --version 2>/dev/null || echo 'found')"
+  fi
+
+  # Verify railway session
+  if ! railway whoami &>/dev/null 2>&1; then
+    echo "  → Not logged in to Railway — launching browser login …"
+    railway login
+  fi
+  echo "  ✔  Logged in as: $(railway whoami 2>/dev/null)"
+
+  echo "✔  All prerequisites satisfied."
+  echo ""
+}
+
+check_prerequisites
+
 # ── helper: Railway GraphQL call ───────────────────────────────────────────────
 railway_gql() {
   local query="$1"
