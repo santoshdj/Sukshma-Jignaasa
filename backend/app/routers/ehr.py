@@ -145,6 +145,14 @@ async def sync_ehr_records(body: SyncEHRRequest) -> SyncEHRResponse:
         row = _get_or_create_connection(session, body.patient_id)
         row.fhir_resource_counts = synced_counts
         row.last_synced_at = now
+        
+        # If sync succeeds, the connection is definitely active
+        # (overrides any incorrect status from connection check)
+        if row.connection_status != "active":
+            row.connection_status = "active"
+            row.connected_at = now
+            logger.info("Updated connection status to 'active' after successful sync for %s", body.patient_id)
+        
         session.commit()
 
     logger.info("EHR sync complete for %s: %s", body.patient_id, synced_counts)

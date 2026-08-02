@@ -29,7 +29,10 @@ function EHRReturnContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ patient_id, patient_session_id }),
         });
-        if (!completeRes.ok) throw new Error("Session verification failed");
+        if (!completeRes.ok) {
+          const errData = await completeRes.json().catch(() => ({ detail: `HTTP ${completeRes.status}` }));
+          throw new Error(typeof errData.detail === "string" ? errData.detail : "Session verification failed");
+        }
         setStatus("syncing");
 
         // Trigger FHIR record sync
@@ -38,12 +41,17 @@ function EHRReturnContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ patient_id }),
         });
-        if (!syncRes.ok) throw new Error("Record sync failed");
+        if (!syncRes.ok) {
+          const errData = await syncRes.json().catch(() => ({ detail: `HTTP ${syncRes.status}` }));
+          throw new Error(typeof errData.detail === "string" ? errData.detail : "Record sync failed");
+        }
         const syncData = await syncRes.json() as { synced_counts: Record<string, number> };
         setSyncCounts(syncData.synced_counts);
         setStatus("done");
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Connection failed");
+        const errorMessage = err instanceof Error ? err.message : "Connection failed";
+        console.error("EHR connection error:", err);
+        setError(errorMessage);
         setStatus("error");
       }
     })();

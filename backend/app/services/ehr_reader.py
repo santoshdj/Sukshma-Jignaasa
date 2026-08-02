@@ -103,15 +103,32 @@ async def get_connections(patient_id: str) -> list[dict]:
 
 
 def _active_connection_status(connections: list[dict]) -> str:
-    """Determine overall status from connection list."""
+    """
+    Determine overall status from connection list.
+    Medblocks may return various statuses — be lenient about what counts as "active".
+    """
     if not connections:
         return "not_connected"
-    statuses = {c.get("status") for c in connections}
-    if "active" in statuses:
+    
+    statuses = {c.get("status", "").lower() for c in connections}
+    logger.info("Connection statuses from Medblocks: %s", statuses)
+    
+    # Accept multiple variations of "active" status
+    active_variants = {"active", "connected", "authorized", "success", "completed"}
+    if statuses & active_variants:  # intersection
         return "active"
-    if "pending" in statuses:
+    
+    pending_variants = {"pending", "in_progress", "processing"}
+    if statuses & pending_variants:
         return "pending"
-    return "failed"
+    
+    failed_variants = {"failed", "error", "denied", "rejected"}
+    if statuses & failed_variants:
+        return "failed"
+    
+    # Unknown status — log and default to pending rather than failed
+    logger.warning("Unknown connection statuses: %s — defaulting to pending", statuses)
+    return "pending"
 
 
 async def pull_fhir_records(
