@@ -45,14 +45,14 @@ async def start_patient_session(patient_id: str, return_url: str) -> str:
     settings = get_settings()
     key = settings.medblocks_api_key
     key_preview = f"{key[:8]}…{key[-4:]}" if len(key) > 12 else ("<empty>" if not key else "<short>")
-    # TODO: REMOVE BEFORE COMMIT — full key logged for local debugging only
-    logger.warning("DEBUG api_key_full=%s", key)
+    
     logger.info(
         "start_patient_session: patient_id=%s return_url=%s api_key=%s",
         patient_id, return_url, key_preview,
     )
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    timeout_config = httpx.Timeout(15.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
         resp = await client.post(
             f"{_BASE_URL}/patient-sessions",
             headers=_headers(),
@@ -81,7 +81,8 @@ async def verify_patient_session(patient_session_id: str) -> dict:
     Retrieve and verify a patient session server-side.
     Per Medblocks skill: never trust browser query params alone.
     """
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    timeout_config = httpx.Timeout(15.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
         resp = await client.get(
             f"{_BASE_URL}/patient-sessions/{patient_session_id}",
             headers=_headers(),
@@ -92,7 +93,8 @@ async def verify_patient_session(patient_session_id: str) -> dict:
 
 async def get_connections(patient_id: str) -> list[dict]:
     """Return the list of connections for a patient."""
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    timeout_config = httpx.Timeout(15.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
         resp = await client.get(
             f"{_BASE_URL}/patients/{patient_id}",
             headers=_headers(),
@@ -145,10 +147,14 @@ async def pull_fhir_records(
     resource_types = resource_types or _FHIR_RESOURCE_TYPES
     results: dict[str, list[dict]] = {rt: [] for rt in resource_types}
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Use per-request timeout (not total) to allow long-running syncs with many pages
+    timeout_config = httpx.Timeout(30.0, connect=10.0)  # 30s per request, 10s to connect
+    
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
         for resource_type in resource_types:
             starting_after: str | None = None
             page = 0
+            total_fetched = 0
 
             while True:
                 params: dict = {"count": _PAGE_SIZE, "resource_type": resource_type}
@@ -163,14 +169,24 @@ async def pull_fhir_records(
                     )
                     resp.raise_for_status()
                     page_data = resp.json()
+                except httpx.TimeoutException as exc:
+                    logger.error(
+                        "FHIR pull TIMEOUT for %s/%s page %d (fetched %d so far): %s",
+                        patient_id, resource_type, page, total_fetched, exc,
+                    )
+                    break
                 except httpx.HTTPStatusError as exc:
                     logger.error(
-                        "FHIR pull HTTP error for %s/%s: %s",
-                        patient_id, resource_type, exc.response.status_code,
+                        "FHIR pull HTTP error for %s/%s page %d: %s - %s",
+                        patient_id, resource_type, page, exc.response.status_code,
+                        exc.response.text[:200] if exc.response.text else "",
                     )
                     break
                 except Exception as exc:
-                    logger.error("FHIR pull error for %s/%s: %s", patient_id, resource_type, exc)
+                    logger.error(
+                        "FHIR pull error for %s/%s page %d: %s",
+                        patient_id, resource_type, page, exc,
+                    )
                     break
 
                 items: list[dict] = page_data.get("data", [])
@@ -178,18 +194,30 @@ async def pull_fhir_records(
                     resource = item.get("resource") or item
                     if resource.get("resourceType") == resource_type or not resource.get("resourceType"):
                         results[resource_type].append(resource)
+                        total_fetched += 1
 
                 page += 1
                 has_more: bool = page_data.get("has_more", False)
                 next_cursor: str | None = page_data.get("next_cursor")
+
+                logger.debug(
+                    "Fetched page %d for %s/%s: %d items, has_more=%s",
+                    page, patient_id, resource_type, len(items), has_more,
+                )
 
                 if not has_more or not next_cursor:
                     break
                 starting_after = next_cursor
 
             logger.info(
-                "Pulled %d %s records for patient %s",
-                len(results[resource_type]), resource_type, patient_id,
+                "Pulled %d %s records for patient %s (across %d pages)",
+                len(results[resource_type]), resource_type, patient_id, page,
             )
 
+    total_records = sum(len(records) for records in results.values())
+    logger.info(
+        "FHIR sync complete for %s: %d total records across %d resource types",
+        patient_id, total_records, len(resource_types),
+    )
+    
     return results
