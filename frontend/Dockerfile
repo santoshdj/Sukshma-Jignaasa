@@ -14,6 +14,10 @@ COPY . .
 ARG NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa
 ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME
 
+# BACKEND_URL is used in next.config.js rewrites (evaluated at build time)
+ARG BACKEND_URL=http://localhost:8000
+ENV BACKEND_URL=$BACKEND_URL
+
 RUN bun run build
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────────
