@@ -22,7 +22,6 @@ $ErrorActionPreference = "Stop"
 
 $GITHUB_REPO  = "santoshdj/Sukshma-Jignaasa"
 $PROJECT_NAME = "sukshma-jignaasa"
-$BRANCH       = "phase-2-intelligence-layer"
 
 # ── prerequisites ─────────────────────────────────────────────────────────────
 function Test-Prerequisites {
@@ -129,7 +128,10 @@ if ($Phase2) {
 
   Write-Host "⟳  Phase 2 — linking frontend → backend …" -ForegroundColor Cyan
 
-  railway variables set "BACKEND_URL=$BackendUrl" --service frontend
+  railway variables set --service frontend "BACKEND_URL=$BackendUrl"
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ⚠  Could not set BACKEND_URL via CLI — set it manually in the Railway dashboard." -ForegroundColor Yellow
+  }
 
   Write-Host "✔  BACKEND_URL=$BackendUrl set on frontend service." -ForegroundColor Green
   Write-Host "✔  Railway will redeploy the frontend automatically." -ForegroundColor Green
@@ -149,27 +151,32 @@ Write-Host "⟳  Phase 1 — configuring services …" -ForegroundColor Cyan
 
 # 1. Backend service
 Write-Host "  → Creating backend service …"
-railway service create backend --source github --repo $GITHUB_REPO --branch $BRANCH 2>$null; $true
-
+# CLI v5: no --source/--repo/--branch flags — connect GitHub repo in the Railway dashboard
+$null = railway service create backend 2>&1
 Write-Host "  → Setting backend environment variables …"
-railway variables set `
-  "ANTHROPIC_API_KEY=$($env_vars['ANTHROPIC_API_KEY'])" `
-  "MEDBLOCKS_API_KEY=$($env_vars['MEDBLOCKS_API_KEY'])" `
-  "MEDBLOCKS_FHIR_BASE_URL=$($env_vars['MEDBLOCKS_FHIR_BASE_URL'])" `
-  "MEDBLOCKS_FHIR_BEARER_TOKEN=$($env_vars['MEDBLOCKS_FHIR_BEARER_TOKEN'])" `
-  --service backend
+try {
+  railway variables set --service backend `
+    "ANTHROPIC_API_KEY=$($env_vars['ANTHROPIC_API_KEY'])" `
+    "MEDBLOCKS_API_KEY=$($env_vars['MEDBLOCKS_API_KEY'])" `
+    "MEDBLOCKS_FHIR_BASE_URL=$($env_vars['MEDBLOCKS_FHIR_BASE_URL'])" `
+    "MEDBLOCKS_FHIR_BEARER_TOKEN=$($env_vars['MEDBLOCKS_FHIR_BEARER_TOKEN'])"
+} catch {
+  Write-Host "  ⚠  Could not set backend vars via CLI — set them in the Railway dashboard." -ForegroundColor Yellow
+}
 
 Write-Host "  ✔  Backend service configured." -ForegroundColor Green
 
-# 3. Frontend service
+# 2. Frontend service
 Write-Host "  → Creating frontend service …"
-railway service create frontend --source github --repo $GITHUB_REPO --branch $BRANCH 2>$null; $true
-
+$null = railway service create frontend 2>&1
 Write-Host "  → Setting frontend environment variables …"
-railway variables set `
-  "NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa" `
-  "BACKEND_URL=http://localhost:8000" `
-  --service frontend
+try {
+  railway variables set --service frontend `
+    "NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa" `
+    "BACKEND_URL=http://localhost:8000"
+} catch {
+  Write-Host "  ⚠  Could not set frontend vars via CLI — set them in the Railway dashboard." -ForegroundColor Yellow
+}
 
 Write-Host "  ✔  Frontend service configured." -ForegroundColor Green
 

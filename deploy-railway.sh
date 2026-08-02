@@ -18,7 +18,6 @@ set -euo pipefail
 
 GITHUB_REPO="santoshdj/Sukshma-Jignaasa"
 PROJECT_NAME="sukshma-jignaasa"
-RAILWAY_API="https://backboard.railway.app/graphql/v2"
 
 # ── prerequisites ─────────────────────────────────────────────────────────────
 check_prerequisites() {
@@ -26,7 +25,7 @@ check_prerequisites() {
 
   # Tools that must exist and cannot be auto-installed
   local missing=()
-  for tool in git curl python3; do
+  for tool in git; do
     if ! command -v "$tool" &>/dev/null; then
       missing+=("$tool")
     fi
@@ -151,43 +150,29 @@ source backend/.env
 
 echo "⟳  Phase 1 — configuring services …"
 
-# 1. Create backend service
+# 1. Create backend service (CLI v5: no --source/--repo/--branch flags — connect GitHub in the dashboard)
 echo "  → Creating backend service …"
-railway service create backend --source github --repo "$GITHUB_REPO" \
-  --branch phase-2-intelligence-layer 2>/dev/null || true
-
-# Set root directory for backend (Railway CLI v3 / GraphQL)
-PROJECT_ID=$(railway status --json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['projectId'])" 2>/dev/null || echo "")
-if [[ -n "$PROJECT_ID" ]]; then
-  echo "  → Setting root directory for backend …"
-  railway_gql "{\"query\":\"mutation { serviceInstanceUpdate(serviceId: \\\"backend\\\", input: { rootDirectory: \\\"/backend\\\" }) { id } }\"}" > /dev/null
-fi
+railway service create backend 2>/dev/null || true
 
 # Set backend env vars
-railway variables set \
-  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
-  MEDBLOCKS_API_KEY="${MEDBLOCKS_API_KEY:-}" \
-  MEDBLOCKS_FHIR_BASE_URL="${MEDBLOCKS_FHIR_BASE_URL:-}" \
-  MEDBLOCKS_FHIR_BEARER_TOKEN="${MEDBLOCKS_FHIR_BEARER_TOKEN:-}" \
-  --service backend
+echo "  → Setting backend environment variables …"
+railway variables set --service backend \
+  "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
+  "MEDBLOCKS_API_KEY=${MEDBLOCKS_API_KEY:-}" \
+  "MEDBLOCKS_FHIR_BASE_URL=${MEDBLOCKS_FHIR_BASE_URL:-}" \
+  "MEDBLOCKS_FHIR_BEARER_TOKEN=${MEDBLOCKS_FHIR_BEARER_TOKEN:-}" || true
 
 echo "  ✔  Backend service configured."
 
-# 3. Create frontend service
+# 2. Create frontend service
 echo "  → Creating frontend service …"
-railway service create frontend --source github --repo "$GITHUB_REPO" \
-  --branch phase-2-intelligence-layer 2>/dev/null || true
-
-if [[ -n "$PROJECT_ID" ]]; then
-  echo "  → Setting root directory for frontend …"
-  railway_gql "{\"query\":\"mutation { serviceInstanceUpdate(serviceId: \\\"frontend\\\", input: { rootDirectory: \\\"/frontend\\\" }) { id } }\"}" > /dev/null
-fi
+railway service create frontend 2>/dev/null || true
 
 # Set frontend env vars
-railway variables set \
-  NEXT_PUBLIC_APP_NAME="Sukshma-Jignaasa" \
-  BACKEND_URL="http://localhost:8000" \
-  --service frontend
+echo "  → Setting frontend environment variables …"
+railway variables set --service frontend \
+  "NEXT_PUBLIC_APP_NAME=Sukshma-Jignaasa" \
+  "BACKEND_URL=http://localhost:8000" || true
 
 echo "  ✔  Frontend service configured."
 
