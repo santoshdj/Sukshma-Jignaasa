@@ -19,12 +19,33 @@ export function EHRConnectionStatus({ patientId }: Props) {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
+  // Fetch status on mount and when patient ID changes
   useEffect(() => {
-    fetch(`/api/ehr/status?patient_id=${encodeURIComponent(patientId)}`)
-      .then((r) => r.json())
-      .then(setStatus)
-      .catch(() => null);
+    const fetchStatus = () => {
+      fetch(`/api/ehr/status?patient_id=${encodeURIComponent(patientId)}`)
+        .then((r) => r.json())
+        .then(setStatus)
+        .catch(() => null);
+    };
+
+    fetchStatus();
   }, [patientId]);
+
+  // Poll for status updates when pending (every 3 seconds)
+  useEffect(() => {
+    if (!status || status.connection_status !== "pending") {
+      return;
+    }
+
+    const pollInterval = setInterval(() => {
+      fetch(`/api/ehr/status?patient_id=${encodeURIComponent(patientId)}`)
+        .then((r) => r.json())
+        .then(setStatus)
+        .catch(() => null);
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [patientId, status]);
 
   const handleConnect = async () => {
     setConnecting(true);
