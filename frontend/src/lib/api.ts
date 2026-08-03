@@ -100,7 +100,15 @@ export interface HypothesisStartResponse {
   patient_id: string;
   status: string;
   observations_available: number;
-  min_observations_required: number;
+  check_ins_available: number;
+  min_check_ins_required: number;
+}
+
+export interface ObservationCountsResponse {
+  total_observations: number;
+  check_ins: number;
+  ehr_observations: number;
+  min_check_ins_required: number;
 }
 
 export interface HypothesisStatusResponse {
@@ -156,6 +164,9 @@ export const hypothesisApi = {
 
   listSessions: (patientId: string) =>
     hypoGet<HypothesisSessionSummary[]>(`/patient/${patientId}/sessions`),
+
+  getObservationCounts: (patientId: string) =>
+    hypoGet<ObservationCountsResponse>(`/patient/${patientId}/observation-counts`),
 };
 
 // ---------------------------------------------------------------------------

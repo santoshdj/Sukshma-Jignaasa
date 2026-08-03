@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { EHRConnectionStatus } from "@/components/EHRConnectionStatus";
 import { hypothesisApi } from "@/lib/api";
@@ -8,30 +8,50 @@ import { hypothesisApi } from "@/lib/api";
 const PATIENT_ID = "patient-demo-001";
 const MIN_OBS = 30;
 
-type PageState = "idle" | "starting" | "error";
+type PageState = "idle" | "starting" | "error" | "loading";
 
 export default function HypothesisPage() {
   const router = useRouter();
-  const [pageState, setPageState] = useState<PageState>("idle");
+  const [pageState, setPageState] = useState<PageState>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [obsCount, setObsCount] = useState<number | null>(null);
+  const [checkInCount, setCheckInCount] = useState<number>(0);
+  const [ehrCount, setEhrCount] = useState<number>(0);
+  const [totalCount, setTotalCount] = useState<number>(0);
+
+  useEffect(() => {
+    const fetchCounts = async () => {
+      try {
+        const counts = await hypothesisApi.getObservationCounts(PATIENT_ID);
+        setCheckInCount(counts.check_ins);
+        setEhrCount(counts.ehr_observations);
+        setTotalCount(counts.total_observations);
+        setPageState("idle");
+      } catch (err) {
+        console.error("Failed to fetch observation counts:", err);
+        setPageState("idle");
+      }
+    };
+    void fetchCounts();
+  }, []);
 
   const startAnalysis = async () => {
     setPageState("starting");
     setError(null);
     try {
       const data = await hypothesisApi.start(PATIENT_ID);
-      setObsCount(data.observations_available);
+      setCheckInCount(data.check_ins_available);
+      setTotalCount(data.observations_available);
       // Redirect to the dedicated monitoring page immediately.
       // The analysis runs as a background task on the server; the new page polls /status.
       router.push(`/analysis/${data.session_id}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
       // Check for the 422 insufficient-data response embedded in the error message
-      if (msg.includes("observations_available")) {
+      if (msg.includes("check_ins_available")) {
         try {
-          const detail = JSON.parse(msg) as { observations_available: number };
-          setObsCount(detail.observations_available);
+          const detail = JSON.parse(msg) as { check_ins_available: number; observations_available: number };
+          setCheckInCount(detail.check_ins_available);
+          setTotalCount(detail.observations_available);
         } catch {
           // ignore parse failure
         }
@@ -43,7 +63,7 @@ export default function HypothesisPage() {
     }
   };
 
-  const insufficientData = obsCount !== null && obsCount < MIN_OBS;
+  const insufficientData = checkInCount < MIN_OBS;
 
   return (
     <main className="max-w-lg mx-auto px-4 py-8 space-y-6">
@@ -67,19 +87,49 @@ export default function HypothesisPage() {
 
       <EHRConnectionStatus patientId={PATIENT_ID} />
 
-      {insufficientData && (
+      {pageState === "loading" && (
+        <div className="text-center py-8 text-slate-500 text-sm">
+          <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto" />
+        </div>
+      )}
+
+      {pageState !== "loading" && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 space-y-3">
+          <p className="font-medium text-slate-700 text-sm">Your data summary</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white rounded-lg px-3 py-2 border border-slate-200">
+              <p className="text-xs text-slate-500">Check-ins completed</p>
+              <p className="text-2xl font-bold text-brand-600">{checkInCount}</p>
+              <p className="text-xs text-slate-400 mt-1">Daily symptom logs</p>
+            </div>
+            <div className="bg-white rounded-lg px-3 py-2 border border-slate-200">
+              <p className="text-xs text-slate-500">Health records</p>
+              <p className="text-2xl font-bold text-slate-700">{ehrCount}</p>
+              <p className="text-xs text-slate-400 mt-1">From EHR system</p>
+            </div>
+          </div>
+          <div className="text-xs text-slate-500 pt-1">
+            Total observations: <span className="font-medium text-slate-700">{totalCount}</span>
+          </div>
+        </div>
+      )}
+
+      {insufficientData && pageState !== "loading" && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-4 text-sm">
-          <p className="font-medium text-amber-800 mb-1">More data needed</p>
+          <p className="font-medium text-amber-800 mb-1">More check-ins needed</p>
           <p className="text-amber-700">
-            Pattern analysis unlocks after {MIN_OBS} check-ins. You have{" "}
-            <span className="font-bold">{obsCount}</span> so far.
+            Pattern analysis requires {MIN_OBS} check-ins. You have completed{" "}
+            <span className="font-bold">{checkInCount}</span> so far.
           </p>
           <div className="mt-3 bg-amber-100 rounded-full h-2">
             <div
               className="bg-amber-500 h-2 rounded-full transition-all"
-              style={{ width: `${Math.min(100, ((obsCount ?? 0) / MIN_OBS) * 100)}%` }}
+              style={{ width: `${Math.min(100, (checkInCount / MIN_OBS) * 100)}%` }}
             />
           </div>
+          <p className="text-xs text-amber-600 mt-2">
+            Keep logging your daily symptoms to unlock pattern analysis.
+          </p>
         </div>
       )}
 

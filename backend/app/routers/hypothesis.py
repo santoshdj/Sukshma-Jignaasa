@@ -86,14 +86,16 @@ async def start_hypothesis(
     )
     fingerprint = _hyp_node._build_symptom_fingerprint(observations)
     obs_count = fingerprint.get("observation_count", 0)
+    check_in_count = fingerprint.get("check_in_count", 0)
 
-    if obs_count < MIN_OBSERVATIONS:
+    if check_in_count < MIN_OBSERVATIONS:
         raise HTTPException(
             status_code=422,
             detail={
-                "message": "Insufficient symptom data",
+                "message": "Insufficient check-in data",
+                "check_ins_available": check_in_count,
                 "observations_available": obs_count,
-                "min_observations_required": MIN_OBSERVATIONS,
+                "min_check_ins_required": MIN_OBSERVATIONS,
             },
         )
 
@@ -119,7 +121,8 @@ async def start_hypothesis(
         patient_id=body.patient_id,
         status="running",
         observations_available=obs_count,
-        min_observations_required=MIN_OBSERVATIONS,
+        check_ins_available=check_in_count,
+        min_check_ins_required=MIN_OBSERVATIONS,
     )
 
 
@@ -131,6 +134,35 @@ def list_patient_sessions(patient_id: str) -> list[HypothesisSessionSummary]:
     """
     rows = session_store.list_for_patient(patient_id, _SESSION_TYPE)
     return [HypothesisSessionSummary(**r) for r in rows]
+
+
+class ObservationCountsResponse(BaseModel):
+    """Response with separate counts for check-ins and EHR observations."""
+    total_observations: int
+    check_ins: int
+    ehr_observations: int
+    min_check_ins_required: int
+
+
+@router.get("/patient/{patient_id}/observation-counts", response_model=ObservationCountsResponse)
+async def get_observation_counts(patient_id: str) -> ObservationCountsResponse:
+    """
+    Get observation counts for a patient without starting analysis.
+    Used by the frontend to display progress toward the 30-check-in threshold.
+    """
+    observations = await asyncio.to_thread(
+        _hyp_node._get_patient_observations_sync, patient_id
+    )
+    fingerprint = _hyp_node._build_symptom_fingerprint(observations)
+    obs_count = fingerprint.get("observation_count", 0)
+    check_in_count = fingerprint.get("check_in_count", 0)
+    
+    return ObservationCountsResponse(
+        total_observations=obs_count,
+        check_ins=check_in_count,
+        ehr_observations=obs_count - check_in_count,
+        min_check_ins_required=MIN_OBSERVATIONS,
+    )
 
 
 @router.get("/{session_id}/status", response_model=HypothesisStatusResponse)

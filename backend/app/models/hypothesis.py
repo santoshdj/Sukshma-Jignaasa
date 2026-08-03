@@ -180,7 +180,8 @@ class StartHypothesisResponse(BaseModel):
     patient_id: str
     status: str
     observations_available: int
-    min_observations_required: int = 30
+    check_ins_available: int
+    min_check_ins_required: int = 30
 
 
 class ApproveHypothesisRequest(BaseModel):

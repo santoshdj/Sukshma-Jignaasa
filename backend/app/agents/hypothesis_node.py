@@ -175,12 +175,29 @@ def _get_patient_observations_sync(patient_id: str) -> list[dict]:
 
 
 def _build_symptom_fingerprint(observations: list[dict]) -> dict:
-    """Extract HPO IDs, triggers, and severity patterns from FHIR Observations."""
+    """Extract HPO IDs, triggers, and severity patterns from FHIR Observations.
+    
+    Returns fingerprint with both total observation count and check-in count.
+    Check-ins are identified by category='survey'.
+    """
     hpo_ids: set[str] = set()
     trigger_texts: list[str] = []
     severity_map: dict[str, list[int]] = {}
+    check_in_count = 0
 
     for obs in observations:
+        # Count check-ins (survey observations)
+        is_check_in = False
+        for cat in obs.get("category", []):
+            for coding in cat.get("coding", []):
+                if coding.get("code") == "survey":
+                    is_check_in = True
+                    break
+            if is_check_in:
+                break
+        if is_check_in:
+            check_in_count += 1
+
         # Extract HPO codes
         for coding in obs.get("code", {}).get("coding", []):
             if coding.get("system") == "https://hpo.jax.org/" and coding.get("code"):
@@ -202,6 +219,7 @@ def _build_symptom_fingerprint(observations: list[dict]) -> dict:
         "trigger_texts": list(set(trigger_texts))[:10],
         "severity_pattern": avg_severities,
         "observation_count": len(observations),
+        "check_in_count": check_in_count,
     }
 
 
@@ -307,14 +325,16 @@ def hypothesis_node(state: HypothesisState) -> dict:
         observations = []
 
     obs_count = fingerprint.get("observation_count", 0)
+    check_in_count = fingerprint.get("check_in_count", 0)
 
-    # Enforce minimum observation gate
-    if obs_count < MIN_OBSERVATIONS:
+    # Enforce minimum observation gate (check-ins only)
+    if check_in_count < MIN_OBSERVATIONS:
         return {
             "observation_count": obs_count,
+            "check_in_count": check_in_count,
             "status": "failed",
             "errors": state.get("errors", []) + [
-                f"Insufficient data: {obs_count} observations (minimum {MIN_OBSERVATIONS} required)"
+                f"Insufficient check-ins: {check_in_count} check-ins (minimum {MIN_OBSERVATIONS} required)"
             ],
         }
 
