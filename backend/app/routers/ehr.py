@@ -15,10 +15,12 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.session import get_session
 from app.db.models import EHRConnectionRow, EHRRecordRow
+from app.utils.config import get_settings
 from app.models.hypothesis import (
     CompleteEHRConnectionRequest,
     EHRConnection,
@@ -40,6 +42,15 @@ router = APIRouter(prefix="/ehr", tags=["EHR Connection"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _get_insert_statement(table):
+    """Return database-specific insert statement for upsert operations."""
+    settings = get_settings()
+    if settings.database_url.startswith("postgresql"):
+        return pg_insert(table)
+    else:
+        return sqlite_insert(table)
+
 
 def _get_or_create_connection(session, patient_id: str) -> EHRConnectionRow:
     row = session.query(EHRConnectionRow).filter_by(patient_id=patient_id).first()
@@ -124,7 +135,7 @@ async def sync_ehr_records(body: SyncEHRRequest) -> SyncEHRResponse:
                     continue
                 # Upsert — idempotent by (patient_id, resource_type, resource_id)
                 stmt = (
-                    sqlite_upsert(EHRRecordRow)
+                    _get_insert_statement(EHRRecordRow)
                     .values(
                         patient_id=body.patient_id,
                         resource_type=resource_type,
