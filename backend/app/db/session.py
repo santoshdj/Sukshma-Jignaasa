@@ -12,10 +12,18 @@ from app.utils.config import get_settings
 @lru_cache
 def _engine():
     settings = get_settings()
+    
+    # SQLite-specific connection args (check_same_thread is SQLite-only)
+    # PostgreSQL uses a different connection model and doesn't need this
+    connect_args = {}
+    if settings.database_url.startswith("sqlite"):
+        connect_args["check_same_thread"] = False
+    
     engine = create_engine(
         settings.database_url,
-        connect_args={"check_same_thread": False},
+        connect_args=connect_args,
     )
+    
     # Enable WAL mode for SQLite so concurrent readers and the background-task
     # writer don't block each other.  No-op on PostgreSQL.
     if settings.database_url.startswith("sqlite"):
